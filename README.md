@@ -11,6 +11,11 @@ Optimization and visualization of leaf‑raking strategies (outside‑in piles v
   - `run_viz.py`: run the interactive 2×2 animation (and optionally save it)
 
 ## Quickstart
+First time: install the package (editable) so scripts can import it:
+
+```
+pip install -e .
+```
 Create optimal centers via MILP and save to CSV:
 
 ```
@@ -21,9 +26,12 @@ Run the 2×2 animation with front‑sweep controls:
 
 ```
 python3 scripts/run_viz.py --show
-# Optional: save an MP4 (requires ffmpeg)
+```
+
+Optional saves (run one of these as a separate command):
+
+```
 python3 scripts/run_viz.py --save --format mp4
-# Or save a GIF (pillow writer)
 python3 scripts/run_viz.py --save --format gif
 ```
 
@@ -45,4 +53,4 @@ Useful flags:
 ## Notes
 - By default, the “Optimization (discrete K≤5)” panel uses a discrete search over candidate sites for parity with the original. The MILP script (`solve_centers_mip.py`) provides a stronger baseline you can wire in if desired.
 - Outputs are saved under `results/`.
-
+ - If you cannot install packages, you can also run with `PYTHONPATH=src` to make the package importable: `PYTHONPATH=src python3 scripts/run_viz.py --show`.

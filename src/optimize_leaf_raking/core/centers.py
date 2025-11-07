@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import itertools
+from typing import Tuple
 import numpy as np
 
 from .config import YardParams
@@ -65,23 +66,46 @@ def centers_opt_discrete(
     alpha: float,
     beta: float,
     K_max: int,
-) -> np.ndarray:
+    *,
+    bag_b0: float = 0.0,
+    bag_b1: float = 0.0,
+    bag_capacity_lb: float = 35.0,
+) -> Tuple[np.ndarray, float]:
     px = np.arange(candidate_spacing / 2, yard.L, candidate_spacing)
     py = np.arange(candidate_spacing / 2, yard.W, candidate_spacing)
     Psites = np.array(list(itertools.product(px, py)), dtype=float)
     if Psites.size == 0:
-        return np.array([[yard.L / 2.0, yard.W / 2.0]])
+        center = np.array([[yard.L / 2.0, yard.W / 2.0]])
+        return center, 0.0
     D = np.sqrt(((cells[:, None, :] - Psites[None, :, :]) ** 2).sum(axis=2))
-    best_total = None
+    n = cells.shape[0]
+    total_mass = float(masses.sum())
+    best_total: float | None = None
     best_combo = None
+
+    # Constant stuffing time across all combos (included to match MILP numerically)
+    stuffing_s = float(bag_b1 * total_mass)
     for K in range(1, K_max + 1):
         for combo in itertools.combinations(range(len(Psites)), K):
-            Csub = D[:, combo]
-            idx = np.argmin(Csub, axis=1)
-            dmin = Csub[np.arange(Csub.shape[0]), idx]
-            rake_s = float(np.sum(alpha * masses * (dmin ** beta)))
-            if (best_total is None) or (rake_s < best_total):
-                best_total = rake_s
-                best_combo = combo
-    return Psites[list(best_combo)] if best_combo is not None else np.array([[yard.L / 2.0, yard.W / 2.0]])
+            Csub = D[:, combo]                 # (n, K)
+            idx = np.argmin(Csub, axis=1)      # nearest center index 0..K-1
+            dmin = Csub[np.arange(n), idx]
 
+            # Raking term (same functional form as MILP)
+            rake_s = float(np.sum(alpha * masses * (dmin ** beta)))
+
+            # Mass per chosen center and bag setup time
+            mass_per_center = np.zeros(K, dtype=float)
+            for i in range(n):
+                mass_per_center[idx[i]] += masses[i]
+            bags_per_center = np.ceil(mass_per_center / max(bag_capacity_lb, 1e-9))
+            bag_setup_s = float(bag_b0 * bags_per_center.sum())
+
+            # Full objective: raking + constant stuffing + bag setups
+            total_s = rake_s + stuffing_s + bag_setup_s
+            if (best_total is None) or (total_s < best_total):
+                best_total = total_s
+                best_combo = combo
+
+    centers = Psites[list(best_combo)] if best_combo is not None else np.array([[yard.L / 2.0, yard.W / 2.0]])
+    return centers, float(best_total if best_total is not None else 0.0)
