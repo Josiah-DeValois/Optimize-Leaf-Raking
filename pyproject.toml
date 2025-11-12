@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "optimize-leaf-raking"
+version = "0.1.0"
+description = "Optimization and visualization of leaf raking strategies"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "numpy",
+  "matplotlib",
+  "pulp",
+]
+authors = [{ name = "", email = "" }]
+license = { text = "MIT" }
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
