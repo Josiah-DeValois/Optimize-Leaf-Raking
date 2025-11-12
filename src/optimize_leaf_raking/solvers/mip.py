@@ -124,7 +124,7 @@ def compute_fixed_centers_objective(
     diff = cells[:, None, :] - centers[None, :, :]
     D = np.sqrt((diff ** 2).sum(axis=2))
     Ccost = alpha * (masses[:, None]) * (D ** beta)
-
+    # LP relaxation for speed: x in [0,1]. With binary y, optimal x is integral except for ties.
     x = pulp.LpVariable.dicts("x", (range(n), range(K)), lowBound=0, upBound=1, cat=pulp.LpContinuous)
     B = pulp.LpVariable.dicts("B", (range(K),), lowBound=0, cat=pulp.LpInteger)
     prob = pulp.LpProblem("fixed_centers_assign", pulp.LpMinimize)
