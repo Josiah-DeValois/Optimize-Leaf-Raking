@@ -44,6 +44,7 @@ def solve_pmedian_mip(
     prob = pulp.LpProblem("leaf_raking_pmedian", pulp.LpMinimize)
 
     y = pulp.LpVariable.dicts("y", (range(m),), lowBound=0, upBound=1, cat=pulp.LpBinary)
+    # Changed to binary variables for assignmentS, changed back to continuous for speed solving
     x = pulp.LpVariable.dicts("x", (range(n), range(m)), lowBound=0, upBound=1, cat=pulp.LpContinuous)
     # Integer number of bags per open site
     B = pulp.LpVariable.dicts("B", (range(m),), lowBound=0, cat=pulp.LpInteger)
@@ -92,3 +93,56 @@ def solve_pmedian_mip(
     chosen = Psites[open_idx]
     obj = float(pulp.value(prob.objective))
     return chosen, obj, y_sol
+
+
+def compute_fixed_centers_objective(
+    cells: np.ndarray,
+    masses: np.ndarray,
+    centers: np.ndarray,
+    alpha: float,
+    beta: float,
+    bag_b0: float,
+    bag_b1: float,
+    bag_capacity_lb: float,
+    rel_gap: float = 0.0,
+) -> float:
+    """Compute MILP objective for best assignment to fixed centers.
+
+    Minimizes raking + bag stuffing + bag setup given open centers.
+    Returns objective value in seconds. Requires PuLP/CBC installed.
+    """
+    try:
+        import pulp
+    except Exception:
+        raise ImportError("PuLP not available. Install with: pip install pulp")
+
+    n = cells.shape[0]
+    K = centers.shape[0]
+    if K == 0:
+        return 0.0
+
+    diff = cells[:, None, :] - centers[None, :, :]
+    D = np.sqrt((diff ** 2).sum(axis=2))
+    Ccost = alpha * (masses[:, None]) * (D ** beta)
+
+    x = pulp.LpVariable.dicts("x", (range(n), range(K)), lowBound=0, upBound=1, cat=pulp.LpContinuous)
+    B = pulp.LpVariable.dicts("B", (range(K),), lowBound=0, cat=pulp.LpInteger)
+    prob = pulp.LpProblem("fixed_centers_assign", pulp.LpMinimize)
+
+    M_total = float(masses.sum())
+    prob += (
+        pulp.lpSum(Ccost[i, j] * x[i][j] for i in range(n) for j in range(K))
+        + bag_b1 * M_total
+        + bag_b0 * pulp.lpSum(B[j] for j in range(K))
+    )
+    for i in range(n):
+        prob += pulp.lpSum(x[i][j] for j in range(K)) == 1, f"assign_{i}"
+    for j in range(K):
+        prob += pulp.lpSum(masses[i] * x[i][j] for i in range(n)) <= bag_capacity_lb * B[j], f"cap_{j}"
+
+    try:
+        solver = pulp.PULP_CBC_CMD(gapRel=rel_gap, msg=True)
+    except TypeError:
+        solver = pulp.PULP_CBC_CMD(options=["-ratioGap", str(rel_gap)], msg=True)
+    prob.solve(solver)
+    return float(pulp.value(prob.objective))

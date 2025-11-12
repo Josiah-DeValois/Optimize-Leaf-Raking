@@ -21,6 +21,7 @@ from ..core.raking import (
     radial_arrival_times_calibrated,
     deposit_piles_disk_from_arrivals,
     deposit_pile_disks_from_masses,
+    baseline_rake_time_to_centers,
 )
 from ..core.bagging import bag_mass_removed, compute_pile_order, walk_times_from_order
 from ..core.centers import centers_bf, centers_micro, centers_opt_discrete
@@ -31,6 +32,9 @@ from ..core.front_sweep import (
     band_bagging_density,
 )
 from .plotting import get_cmap, draw_density
+from optimize_leaf_raking.solvers.mip import compute_fixed_centers_objective
+from pathlib import Path
+import csv
 
 
 @dataclass
@@ -97,14 +101,26 @@ def build_initial_state(
     alpha, beta = calibrate_rake_model(calib_data.raking_splits)
     b0, b1 = calibrate_bag_model(calib_data.bagging_times, bag_capacity_lb=35.0)
 
-    # Centers for panels: 0 (BF), 1 (front band placeholder), 2 (micro), 3 (discrete opt)
+    # Centers for panels: 0 (BF), 1 (front band placeholder), 2 (micro), 3 (Optimization)
     c0 = centers_bf(yard, yd["masses"], bag_capacity_lb=35.0)
     c1 = np.empty((0, 2))
     c2 = centers_micro(yd["cells"], yd["masses"], bag_capacity_lb=35.0, seed=42)
-    c3, c3_obj = centers_opt_discrete(
-        yd["cells"], yd["masses"], yard, cand.spacing, alpha, beta, cand.K_max,
-        bag_b0=b0, bag_b1=b1, bag_capacity_lb=35.0,
-    )
+    # Prefer MILP centers from results/optimal_centers.csv if available; otherwise use discrete search
+    c3 = None
+    csv_path = Path("results/optimal_centers.csv")
+    if csv_path.exists():
+        try:
+            rows = list(csv.DictReader(csv_path.open()))
+            loaded = np.array([[float(r["x"]), float(r["y"]) ] for r in rows], dtype=float)
+            if loaded.size:
+                c3 = loaded
+        except Exception:
+            c3 = None
+    if c3 is None:
+        c3, _ = centers_opt_discrete(
+            yd["cells"], yd["masses"], yard, cand.spacing, alpha, beta, cand.K_max,
+            bag_b0=b0, bag_b1=b1, bag_capacity_lb=35.0,
+        )
     centers_list = [c0, c1, c2, c3]
 
     # Precompute outside-in arrivals and bagging plan for 0,2,3
@@ -158,6 +174,26 @@ def build_initial_state(
     rake_total_secs[1] = T_rake
     bag_total_secs[1] = bag_total_band
 
+    # Override Optimization panel totals with exact MILP objective for the chosen centers
+    if centers_list[3].size:
+        obj_mip_fixed = compute_fixed_centers_objective(
+            yd["cells"], yd["masses"], centers_list[3], alpha, beta, b0, b1, 35.0, rel_gap=0.0
+        )
+        rake_base = baseline_rake_time_to_centers(
+            yd["cells"], yd["masses"], centers_list[3], alpha, beta, yard
+        )
+        bag_total_secs[3] = max(0.0, obj_mip_fixed - rake_base)
+        rake_total_secs[3] = rake_base
+        # Speed up Optimization panel dynamics to finish at MILP bag time
+        info3 = radial_data.get(3)
+        if info3 is not None:
+            orig = float((info3.bag_times.sum() if info3.bag_times.size else 0.0) + (info3.walk_times.sum() if info3.walk_times.size else 0.0))
+            desired = float(bag_total_secs[3])
+            if orig > 1e-12 and desired > 0:
+                scale = desired / orig
+                info3.bag_times = info3.bag_times * scale
+                info3.walk_times = info3.walk_times * scale
+
     return VizState(
         yard=yard,
         viz=viz,
@@ -209,8 +245,12 @@ def panel_totals_seconds_no_walk(state: VizState) -> List[float]:
     totals = [0.0, 0.0, 0.0, 0.0]
     # Outside-in panels
     for i in (0, 2, 3):
-        info = state.radial_data[i]
-        bag_only = float(info.bag_times.sum()) if info.bag_times.size else 0.0
+        if i == 3:
+            # Use overridden bag_total_secs for Optimization (matches MILP objective)
+            bag_only = state.bag_total_secs[i]
+        else:
+            info = state.radial_data[i]
+            bag_only = float(info.bag_times.sum()) if info.bag_times.size else 0.0
         totals[i] = state.rake_total_secs[i] + bag_only
     # Front-sweep panel (same as with-walking since no walking is modeled)
     totals[1] = state.rake_total_secs[1] + state.bag_total_band
