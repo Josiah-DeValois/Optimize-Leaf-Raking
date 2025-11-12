@@ -13,7 +13,7 @@ dependencies = [
   "matplotlib",
   "pulp",
 ]
-authors = [{ name = "", email = "" }]
+authors = [{ name = "Josiah DeValois", email = "" }]
 license = { text = "MIT" }
 
 [tool.setuptools]
